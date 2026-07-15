@@ -176,11 +176,7 @@ This generates `client.jar` and copies it to the Processing project.
 └── Relatorio_Grupo17PC.pdf
 ```
 
-The TCP communication protocol is documented in:
-
-```text
-docs/protocolo_tcp/protocolo.txt
-```
+The TCP communication protocol is documented in [protocol](docs/protocolo_tcp/protocolo.txt).
 
 ## Academic Context
 
