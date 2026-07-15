@@ -185,4 +185,4 @@ The TCP communication protocol is documented in [protocol](docs/protocolo_tcp/pr
 - University: University of Minho
 - Academic year: 2025/2026
 - Project grade: 19/20
-- Group project developed by four students
+- Group project
