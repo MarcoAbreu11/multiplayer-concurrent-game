@@ -1,0 +1,228 @@
+# Protocolo de Comunicação TCP
+## Servidor Erlang (Membro 2) ↔ Cliente Java (Membro 4)
+
+## 1. Objetivo
+
+Este protocolo define as mensagens trocadas por TCP entre o cliente Java e o servidor Erlang.
+
+Objetivos:
+- parsing consistente das mensagens recebidas do cliente
+- serialização consistente das respostas do servidor
+- integração limpa entre `connection_session` e cliente Java
+
+---
+
+## 2. Regras gerais do protocolo
+
+### 2.1 Transporte
+- comunicação via TCP
+- mensagens em texto
+- 1 mensagem por linha
+- cada linha termina com `\n`
+
+### 2.2 Formato
+- tokens separados por espaço
+- sem JSON
+- respostas curtas e previsíveis
+- strings sem espaços
+
+--- 
+
+## 3. Estados da sessão
+
+A `connection_session` comporta-se como uma máquina de estados.
+
+Estados:
+- `connected`
+- `authenticated`
+- `waiting`
+- `in_game`
+
+### 3.1 `connected`
+Cliente ligado por TCP, mas ainda não autenticado.
+
+### 3.2 `authenticated`
+Cliente autenticado, mas fora da fila e fora de jogo.
+
+### 3.3 `waiting`
+Cliente autenticado e na fila de espera.
+
+### 3.4 `in_game`
+Cliente a participar numa partida ativa.
+
+---
+
+## 4. Mensagens cliente → servidor
+- create_account <username> <password>
+- login <username> <password>
+- logout
+- close_account <username> <password>
+
+- join_queue
+- leave_queue
+- top_scores
+
+## Mensagens cliente → servidor para a game session
+- input Key Action
+Onde: Key ∈ {left, right, forward}
+Action ∈ {down, up}
+
+Exemplos: 
+- input left down
+- input left up
+- input right down
+- input right up
+- input forward down
+- input forward up
+
+##### Nota
+No protocolo TCP usa-se a palavra "forward".
+Internamente, no game engine Erlang, as teclas sao convertidas para os atomos `esquerda`, `direita` e `frente`.
+
+## 5. Mensagens servidor → cliente
+
+### Respostas de autenticação
+- create_account_ok
+- create_account_error username_taken
+
+- login_ok <username>
+- login_error user_not_found
+- login_error wrong_password
+- login_error already_online
+
+- logout_ok
+
+- close_account_ok
+- close_account_error invalid
+
+### Respostas da fila
+- join_queue_ok
+- join_queue_error already_waiting
+
+- leave_queue_ok
+- leave_queue_error not_in_queue
+
+### Respostas do top
+- top_scores empty
+- top_scores Username1:Score1,Username2:Score2,...
+Ex: top_scores rafael:5,joao:3,maria:1
+
+##### Nota:
+- `top_scores` e uma resposta completa, nao um stream nem uma resposta parcial. Os valores representam a melhor pontuacao vencedora de cada jogador, medida em capturas.
+- Um pedido `top_scores`, quando feito em estado `waiting`, produz exatamente uma resposta:
+  - `top_scores empty`
+  - ou `top_scores ...`
+- Se o cliente enviar `top_scores` fora do estado `waiting`, a resposta correta é:
+  - `error invalid_state top_scores`
+
+## Mensagens servidor → cliente para a game session
+1) Início da partida
+- game_started <game_id>
+  - Partida iniciada.
+  - Exemplo: `game_started 7`
+
+- game_config <width> <height> <tick_ms>
+  - Configuração do jogo.
+  - Exemplo: `game_config 800 600 50`
+ 
+ ##### Ordem recomendada no arranque do jogo
+ ```
+game_started <game_id>
+game_config <width> <height> <tick_ms>
+primeiro bloco game_state
+```
+
+2) Update do mundo
+- bloco multi-linha por update:
+```
+game_state_begin <tick_or_timestamp>
+player ...
+player ...
+food ...
+poison ...
+game_state_end
+```
+
+##### Nota
+- Cada bloco game_state representa um snapshot completo do mundo naquele instante.
+Ou seja:
+  - inclui todos os jogadores ativos
+  - inclui todos os objetos comestíveis presentes
+  - inclui todos os objetos venenosos presentes
+  - o cliente deve substituir o estado visual anterior pelo novo snapshot
+- Se num dado snapshot não existirem entidades de um certo tipo, então simplesmente não aparecem linhas desse tipo.
+
+##### Ordem recomendada dentro de cada game_state
+- todas as linhas player
+- todas as linhas food
+- todas as linhas poison
+
+2.1) game_state_begin <tick>
+- Início do snapshot.
+- O tick é um contador lógico do jogo.
+- Exemplos: `game_state_begin 1`, `game_state_begin 2`, `game_state_begin 3`
+
+2.2) player <username> <x> <y> <radius> <angle> <captures> <tag>
+- Representação de um jogador.
+Onde:
+- x, y, radius, angle podem ser valores decimais
+- captures é inteiro
+- tag ∈ {me, other}
+
+Significado de tag:
+- me → este jogador é o próprio cliente que está a receber a mensagem
+- other → este jogador é outro jogador
+
+2.3) food <id> <x> <y> <radius>
+- Representação de um objeto comestível.
+Onde:
+- id é inteiro
+- x, y, radius podem ser valores decimais
+
+2.4) poison <id> <x> <y> <radius>
+- Representação de um objeto venenoso.
+Onde:
+- id é inteiro
+- x, y, radius podem ser valores decimais
+
+2.5) game_state_end
+- Fim do snapshot.
+
+3) Fim da partida
+- game_over winner <username> <captures>
+  - Partida terminada com vencedor único.
+ 
+- game_over tie
+  - Partida terminou empatada. 
+
+4) Fim anormal / aborto
+- game_aborted player_disconnected <username>
+  - Partida terminada por desconexão de um jogador.
+
+
+## Mensagens de erro por estado inválido
+- error invalid_state <command>
+
+### Estado connected
+Permitido: create_account | login | close_account
+### Estado authenticated
+Permitido: join_queue | logout | close_account
+### Estado waiting
+Permitido: leave_queue | top_scores
+### Estado in_game
+Permitido: input left/right/forward down/up
+
+## Erro de parsing / mensagem inválida
+- error bad_request
+
+###### Nota:
+Usa error bad_request quando:
+- comando desconhecido
+- número de argumentos errado
+- argumento inválido
+- formato impossível de parsear
+
+Usa error invalid_state ... quando:
+- o comando existe
+- o formato está correto
+- mas não pode ser usado naquele estado
